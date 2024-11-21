@@ -14,6 +14,10 @@ def about(request):
     return render(request, 'recipe_catalog/about.html')
 
 def recipe_detail(request, pk):
+    try:
+        recipe = Recipe.objects.get(pk=pk)
+    except Recipe.DoesNotExist:
+        return handle_error_404(request)
     recipe = Recipe.objects.get(pk=pk)
     context = {
         'recipe_id': recipe.id,
@@ -24,3 +28,6 @@ def recipe_detail(request, pk):
         'ingredients': recipe.ingredients.order_by('name'),
     }
     return render(request, 'recipe_catalog/recipe.html', context)
+
+def handle_error_404(request):
+    return render(request, 'recipe_catalog/404.html', status=404)

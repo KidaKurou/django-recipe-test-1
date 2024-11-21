@@ -49,6 +49,6 @@ class RouteTestCase(TestCase):
 
     def test_nonexistent_recipe_route(self):
         """Test route for non-existent recipe"""
-        non_existent_id = Recipe.objects.count() + 1
+        non_existent_id = Recipe.objects.count() + 999
         response = self.client.get(reverse('recipe_catalog:recipe_detail', kwargs={'pk': non_existent_id}))
         self.assertEqual(response.status_code, HTTPStatus.NOT_FOUND)
