@@ -1,53 +1,61 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 from recipe_catalog.models import Recipe, Ingredient, RecipeIngredient
 from datetime import timedelta
 from decimal import Decimal
+
+User = get_user_model()
 
 class ContentTestCase(TestCase):
     RECIPE_URL = reverse('recipe_catalog:recipe_detail', args=[1])
     @classmethod
     def setUpTestData(cls):
-        # Create test ingredients
+        # Create test user
+        cls.user = User.objects.create_user(username='contentuser', password='testpass')
+
+        # Создаем базовые ингредиенты
         cls.flour = Ingredient.objects.create(
-            name='Flour', 
-            weight=1000, 
-            weight_ready=900, 
+            name='Flour',
+            weight=1000,
+            weight_ready=900,
             price=Decimal('2.50')
         )
-        
-        cls.water = Ingredient.objects.create(
-            name='Water', 
-            weight=1000, 
-            weight_ready=1000, 
-            price=Decimal('0.10')
+        cls.sugar = Ingredient.objects.create(
+            name='Sugar',
+            weight=500,
+            weight_ready=500,
+            price=Decimal('1.50')
         )
-
-        cls.ingredients = [cls.flour, cls.water]
+        cls.ingredients = [cls.flour, cls.sugar]
         
-        # Create multiple test recipes for sorting
-        cls.recipes = [
-            Recipe.objects.create(
-                title='Cake', 
-                description='Sweet cake', 
-                cooking_time=timedelta(minutes=60)
-            ),
-            Recipe.objects.create(
-                title='Apple Pie', 
-                description='Delicious pie', 
-                cooking_time=timedelta(minutes=45)
-            ),
-            Recipe.objects.create(
-                title='Bread', 
-                description='Simple bread', 
-                cooking_time=timedelta(minutes=30)
+        # Создаем фиксированное количество рецептов
+        cls.recipes = []
+        for i in range(16):  # 16 рецептов для тестирования пагинации
+            recipe = Recipe.objects.create(
+                title=f'Recipe {i}',
+                description=f'Description {i}',
+                cooking_time=timedelta(minutes=30),
+                author=cls.user
             )
-        ]
+            # Добавляем ингредиенты к рецепту
+            recipe.ingredients.set(cls.ingredients)
+            cls.recipes.append(recipe)
         
-        # Link ingredients to recipes
-        for recipe in cls.recipes:
-            RecipeIngredient.objects.create(recipe=recipe, ingredient=cls.flour)
-            RecipeIngredient.objects.create(recipe=recipe, ingredient=cls.water)
+        # Создаем ингредиенты для тестового рецепта
+        cls.flour = cls.ingredients[0]
+        cls.water = cls.ingredients[1]
+
+        # Создаем тестовый рецепт
+        cls.recipe = Recipe.objects.create(
+            title='Test Recipe',
+            description='Test Description',
+            cooking_time=timedelta(minutes=30),
+            author=cls.user
+        )
+        # Добавляем ингредиенты к рецепту
+        cls.recipe.ingredients.set(cls.ingredients)
+
 
     def test_ingredient_creation(self):
         """Test correct ingredient object creation"""
@@ -58,22 +66,23 @@ class ContentTestCase(TestCase):
 
     def test_recipe_creation(self):
         """Test correct recipe object creation"""
-        recipe = self.recipes[0]
+        recipe = self.recipe
         self.assertTrue(recipe.ingredients.exists())
-        self.assertEqual(recipe.cooking_time, timedelta(minutes=60))
+        self.assertEqual(recipe.cooking_time, timedelta(minutes=30))
 
     def test_ingredients_alphabetical_order(self):
         """Test ingredients are sorted alphabetically"""
-        recipe = self.recipes[0]
+        recipe = self.recipe
         recipe_ingredients = recipe.ingredients.order_by('name')
-        self.assertEqual(list(recipe_ingredients), [self.flour, self.water])
+        self.assertEqual(list(recipe_ingredients), self.ingredients)
     
     # Test recipe view context -------------------------------------------------------------
     def test_recipes_list_view_context(self):
+        """Test recipe list view context"""
         response = self.client.get(reverse('recipe_catalog:index'))
         self.assertEqual(response.status_code, 200)
         context = response.context
-        self.assertEqual(len(context['recipes']), len(self.recipes))
+        self.assertEqual(len(context['recipes']), 10) # 10 recipes per page
         self.sorted_recipes = sorted(self.recipes, key=lambda recipe: recipe.title)
         for i, recipe in enumerate(context['recipes']):
             self.assertEqual(recipe.title, self.sorted_recipes[i].title)
@@ -81,6 +90,7 @@ class ContentTestCase(TestCase):
             self.assertEqual(recipe.description, self.sorted_recipes[i].description)
 
     def test_recipe_view_context(self):
+        """Test recipe detail view context"""
         url = reverse('recipe_catalog:recipe_detail', args=[self.recipes[0].id])
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
@@ -94,6 +104,7 @@ class ContentTestCase(TestCase):
             self.assertEqual(ingredient.name, self.ingredients[i].name)
     
     def test_recipe_ingredients_count(self):
+        """Test recipe detail view context"""
         response = self.client.get(self.RECIPE_URL)
         context = response.context
         self.assertEqual(len(context['ingredients']), len(self.ingredients))
@@ -108,7 +119,44 @@ class ContentTestCase(TestCase):
 
     def test_recipe_ingredient_relationship(self):
         """Test many-to-many relationship between recipes and ingredients"""
-        recipe = self.recipes[0]
+        recipe = self.recipe
         self.assertEqual(recipe.ingredients.count(), 2)
         self.assertIn(self.flour, recipe.ingredients.all())
         self.assertIn(self.water, recipe.ingredients.all())
+    
+
+    def test_pagination_on_index_page(self):
+        """Test that index page shows maximum 10 recipes per page"""
+        response = self.client.get(reverse('recipe_catalog:index'))
+        self.assertEqual(len(response.context['recipes']), 10)
+        
+        # Check second page
+        response = self.client.get(f"{reverse('recipe_catalog:index')}?page=2")
+        self.assertEqual(len(response.context['recipes']), 7)
+
+    def test_recipe_ingredients_sorting(self):
+        """Test ingredients are displayed in alphabetical order on recipe detail page"""
+        recipe = Recipe.objects.first()
+        url = reverse('recipe_catalog:recipe_detail', args=[recipe.id])
+        response = self.client.get(url)
+        
+        ingredients = response.context['ingredients']
+        ingredient_names = [i.name for i in ingredients]
+        self.assertEqual(ingredient_names, sorted(ingredient_names))
+
+    def test_recipe_form_visibility(self):
+        """Test recipe form visibility based on authentication status"""
+        create_url = reverse('recipe_catalog:recipe')
+        # Анонимный пользователь
+        response = self.client.get(create_url)
+        self.assertRedirects(
+            response,
+            f'/auth/login/?next={create_url}',
+            fetch_redirect_response=False
+        )
+        
+        # Авторизованный пользователь
+        self.client.force_login(self.user)
+        response = self.client.get(create_url)
+        self.assertEqual(response.status_code, 200)
+        

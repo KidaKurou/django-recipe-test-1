@@ -1,15 +1,20 @@
 from django.test import TestCase, Client
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 from http import HTTPStatus
 from recipe_catalog.models import Recipe, Ingredient, RecipeIngredient
 from datetime import timedelta
 
+User = get_user_model()
+
 class RouteTestCase(TestCase):
-    def setUp(self):
-        self.client = Client()
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username='testuser', password='testpass')
+        cls.client = Client()
         
         # Create test ingredient
-        self.ingredient = Ingredient.objects.create(
+        cls.ingredient = Ingredient.objects.create(
             name='Test Ingredient', 
             weight=100, 
             weight_ready=80, 
@@ -17,7 +22,7 @@ class RouteTestCase(TestCase):
         )
         
         # Create test recipe
-        self.recipe = Recipe.objects.create(
+        cls.recipe = Recipe.objects.create(
             title='Test Recipe',
             description='Test Description',
             cooking_time=timedelta(minutes=30)
@@ -25,8 +30,8 @@ class RouteTestCase(TestCase):
         
         # Link ingredient to recipe
         RecipeIngredient.objects.create(
-            recipe=self.recipe, 
-            ingredient=self.ingredient
+            recipe=cls.recipe, 
+            ingredient=cls.ingredient
         )
 
     def test_index_route(self):
@@ -52,3 +57,31 @@ class RouteTestCase(TestCase):
         non_existent_id = Recipe.objects.count() + 999
         response = self.client.get(reverse('recipe_catalog:recipe_detail', kwargs={'pk': non_existent_id}))
         self.assertEqual(response.status_code, HTTPStatus.NOT_FOUND)
+    
+    def test_ingredient_routes(self):
+        """Test ingredient-related routes"""
+        # Test ingredients list (public access)
+        response = self.client.get(reverse('recipe_catalog:ingredients'))
+        self.assertEqual(response.status_code, 200)
+        
+        # Test ingredient creation (requires auth)
+        create_url = reverse('recipe_catalog:ingredient')
+        
+        # Test unauthenticated
+        response = self.client.get(create_url)
+        self.assertRedirects(
+            response,
+            f'/auth/login/?next={create_url}',
+            fetch_redirect_response=False
+        )
+        
+        # Test authenticated
+        self.client.login(username='testuser', password='testpass')
+        response = self.client.get(create_url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_auth_routes(self):
+        """Test authentication-related routes"""
+        login_url = '/auth/login/'
+        response = self.client.get(login_url)
+        self.assertEqual(response.status_code, 200)
